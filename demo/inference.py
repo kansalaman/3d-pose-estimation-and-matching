@@ -1,7 +1,11 @@
+import sys
+
+sys.path.append('.')
+
 import torch
 from torchvision import transforms
 import argparse
-import data.pose_detection_2d.hrnet.model as hrnet
+import data.preprocessing.hrnet.model as hrnet
 from yacs.config import CfgNode as CN
 from PIL import Image
 from experiments.default import get_config_file
@@ -204,7 +208,7 @@ def infer(diffpose, hrnet, fn, n_hypo=200, scale=1.):
 
     import matplotlib.pyplot as plt
     import matplotlib
-    matplotlib.use('qtagg')
+    matplotlib.use('Agg')
 
     cmap = color_map(17, normalized=True)
     overlayed_img = 0.
@@ -217,11 +221,13 @@ def infer(diffpose, hrnet, fn, n_hypo=200, scale=1.):
         amax = np.argmax(hm.flatten())
         x, y = np.unravel_index(amax, hm.shape[:-1])
 
-        plt.scatter(y, x, c=color, label=MPII_NAMES[i])
+        print(y, x, color)
+        plt.scatter(y, x, c=color[0], label=MPII_NAMES[i])
 
+    # plt.savefig('out.png')
     plt.imshow(overlayed_img, vmin=0., vmax=1.)
     plt.legend()
-    plt.show()
+    plt.savefig('heatmap.png')
 
     plot17j_multi(
         poses[:5].numpy(),
@@ -232,9 +238,9 @@ def infer(diffpose, hrnet, fn, n_hypo=200, scale=1.):
 
 
 def get_pretrained_model(
-        config_file='../data/pose_detection_2d/hrnet/mpii_hrnet_w32_255x255.yaml',
+        config_file='data/preprocessing/hrnet/mpii_hrnet_w32_255x255.yaml',
         # model_weights='../data/pose_detection_2d/fine_HRNet.pt'  # H36M finetuned
-        model_weights='../data/pose_detection_2d/pose_hrnet_w32_256x256.pth'  # Original MPII
+        model_weights='data/preprocessing/pose_hrnet_w32_256x256.pth'  # Original MPII
 ):
     cfg = get_hrnet_config_file(config_file)
     m = hrnet.get_pose_net(
