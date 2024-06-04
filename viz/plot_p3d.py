@@ -30,6 +30,8 @@ def plot17j(pose, swap_axes=True, return_fig=False):
     x = pose[0:17]
     y = pose[17:34]
     z = pose[34:51]
+
+
     ax.scatter(x, y, z)
 
     B = BONES17j
@@ -49,14 +51,16 @@ def plot17j(pose, swap_axes=True, return_fig=False):
     plt.close()
 
 
-def plot17j_multi(poses, swap_axes=True, return_fig=False):
+def plot17j_multi(poses, save_path = None, swap_axes=True, return_fig=False):
     # plots multiple 3d poses, shape: (-1, 51)
     assert poses.shape[1] == 3 * 17
     if swap_axes:
         poses = swap_pose_axes17j(poses)
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    ax.view_init(elev=6, azim=-78)
+
+    # fig = plt.figure()
+    # ax = fig.add_subplot(111, projection='3d')
+    # ax.view_init(elev=6, azim=-78)
+
     # first pose is colored red
     colors = ['r']
     while poses.shape[0] > len(colors):
@@ -69,19 +73,31 @@ def plot17j_multi(poses, swap_axes=True, return_fig=False):
         z = pose[34:51]
 
         B = BONES17j
-        for l in range(len(B)):
-            ax.plot(x[B[l]], y[B[l]], z[B[l]], lw=2, c=colors[i])
+        # for l in range(len(B)):
+        #     ax.plot(x[B[l]], y[B[l]], z[B[l]], lw=2, c=colors[i])
 
         # Create cubic bounding box to simulate equal aspect ratio
         Xb, Yb, Zb = get_limits(x, y, z)
 
-        for xb, yb, zb in zip(Xb, Yb, Zb):
-            ax.plot([xb], [yb], [zb], 'w')
+        # for xb, yb, zb in zip(Xb, Yb, Zb):
+        #     ax.plot([xb], [yb], [zb], 'w')
+    
+    if save_path:
+        dominant_pose = poses[0]
+        x = dominant_pose[0:17]
+        y = dominant_pose[17:34]
+        z = dominant_pose[34:51]
 
-    if return_fig:
-        return fig
-    plt.show()
-    plt.close()
+        pose_3d = np.stack([x, y, z], axis=1)
+        np.savez(save_path, pose_3d=pose_3d)
+    
+    return save_path
+
+    # if return_fig:
+    #     return fig
+    # plt.savefig('out.png')
+    # plt.show()
+    # plt.close()
 
 
 def swap_pose_axes17j(poses_3d):

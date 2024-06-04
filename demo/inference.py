@@ -1,7 +1,9 @@
+import os
 import sys
 
 sys.path.append('.')
 
+import pandas as pd
 import torch
 from torchvision import transforms
 import argparse
@@ -18,6 +20,9 @@ from utils.data_utils import (
     reinsert_root_joint_torch, root_center_poses, mpii_to_h36m, mpii_to_h36m_covar, H36M_NAMES, MPII_NAMES
 )
 import numpy as np
+import glob
+
+from tqdm import tqdm
 
 
 # 16 joints MPII skeleton used for the HRNet detections
@@ -187,7 +192,9 @@ image_transforms = transforms.Compose([
 
 
 @torch.inference_mode()
-def infer(diffpose, hrnet, fn, n_hypo=200, scale=1.):
+def infer(diffpose, hrnet, image, outfol, n_hypo=200, scale=1.):
+    fn = image['file_path']
+
     img = Image.open(fn)
 
     img.show()
@@ -199,19 +206,16 @@ def infer(diffpose, hrnet, fn, n_hypo=200, scale=1.):
     poses = diffpose.sample(heatmap*scale, n_hypotheses_to_sample=n_hypo)
     t2 = time.time()
 
-    print('Heatmap: ', t1 - t0)
-    print('Pose sampling: ', t2 - t1)
-    print('Total time: ', t2 - t0)
-
     poses = reinsert_root_joint_torch(poses)
     poses = root_center_poses(poses) * 1000.
 
-    import matplotlib.pyplot as plt
-    import matplotlib
-    matplotlib.use('Agg')
+    # import matplotlib.pyplot as plt
+    # import matplotlib
+    # matplotlib.use('Agg')
 
     cmap = color_map(17, normalized=True)
     overlayed_img = 0.
+    pose_2d = np.zeros((16, 2))
     for i in range(heatmap.shape[1]):
         hm = heatmap[0, i, :, :, None].numpy()
         color = cmap[i + 1][None, None, :]
@@ -221,36 +225,44 @@ def infer(diffpose, hrnet, fn, n_hypo=200, scale=1.):
         amax = np.argmax(hm.flatten())
         x, y = np.unravel_index(amax, hm.shape[:-1])
 
-        print(y, x, color)
-        plt.scatter(y, x, c=color[0], label=MPII_NAMES[i])
-
+        # plt.scatter(y, x, c=color[0], label=MPII_NAMES[i])
+        pose_2d[i] = [y, x]
+        
     # plt.savefig('out.png')
-    plt.imshow(overlayed_img, vmin=0., vmax=1.)
-    plt.legend()
-    plt.savefig('heatmap.png')
+    # plt.imshow(overlayed_img, vmin=0., vmax=1.)
+    # plt.legend()
+    # plt.savefig('heatmap.png')
 
-    plot17j_multi(
+    # save 2d pose array as npz and store path in a variable for returning
+    pose_2d_path = f'{outfol}/2d_poses/pose_2d_{image["id"]}.npz'
+    np.savez(pose_2d_path, pose_2d=pose_2d)
+
+    pose_3d_path = plot17j_multi(
         poses[:5].numpy(),
-        return_fig=False
+        return_fig=False,
+        save_path=f'{outfol}/3d_poses/pose_3d_{image["id"]}.npz'
     )
 
-    print(poses.shape)
+    return pose_2d_path, pose_3d_path
 
 
 def get_pretrained_model(
         config_file='data/preprocessing/hrnet/mpii_hrnet_w32_255x255.yaml',
-        # model_weights='../data/pose_detection_2d/fine_HRNet.pt'  # H36M finetuned
-        model_weights='data/preprocessing/pose_hrnet_w32_256x256.pth'  # Original MPII
+        model_weight_path='downloads/pretrained/fine_HRNet.pt'  # H36M finetuned
+        # model_weights='downloads/pretrained/pose_hrnet_w32_256x256.pth'  # Original MPII
 ):
     cfg = get_hrnet_config_file(config_file)
     m = hrnet.get_pose_net(
         cfg, False
     )
 
-    model_weights = torch.load(model_weights)
+    model_weights = torch.load(model_weight_path)
+
+    if 'fine' in model_weight_path:
+        model_weights = model_weights['net']
 
     m.load_state_dict(model_weights)
-    # m.load_state_dict(model_weights['net'])
+    
     m.eval()
 
     return m
@@ -259,13 +271,20 @@ def get_pretrained_model(
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     # 360, 370, 705 works
-    parser.add_argument('--input', type=str, help='Path to image file to generate pose from', default='image_000018.png')
+    # parser.add_argument('--input', type=str, help='Path to image file to generate pose from', default='image_000018.png')
     parser.add_argument('--config', type=str, default='config.yaml')
+    parser.add_argument('--hmodel', type=str, choices=['fine', 'original'], default='fine')
 
     args = parser.parse_args()
+
+    if args.hmodel == 'fine':
+        model_weights = 'downloads/pretrained/fine_HRNet.pt'
+    else:
+        model_weights = 'downloads/pretrained/pose_hrnet_w32_256x256.pth'
+
     cfg = get_config_file(args.config)
 
-    hrnet = get_pretrained_model()
+    hrnet = get_pretrained_model(model_weight_path=model_weights)
     hrnet.eval()
 
     denoiser = get_denoiser(cfg).to('cpu')
@@ -282,6 +301,42 @@ if __name__ == '__main__':
         cosine_offset=cfg.TRAIN.COSINE_OFFSET
     ).to('cpu')
 
-    diffusion.load_state_dict(torch.load('model-final.pt')['model'])
+    diffusion.load_state_dict(torch.load('downloads/pretrained/model-final.pt')['model'])
 
-    infer(diffusion, hrnet, args.input)
+    data_file = 'results/data.csv'
+    output_folder = 'results/orig'
+    output_csv_file = f'{output_folder}/out.csv'
+
+    df = pd.read_csv(data_file)
+    os.makedirs(f'{output_folder}/2d_poses', exist_ok=True)
+    os.makedirs(f'{output_folder}/3d_poses', exist_ok=True)
+
+    # create results/out.csv with pose_2d_path and pose_3d_path as additional cols
+    df['pose_2d_path'] = ''
+    df['pose_3d_path'] = ''
+
+    pb = tqdm(df.iterrows(), total=len(df))
+
+    for i, row in df.iterrows():
+        image = {
+            'file_path': row['file_path'],
+            'id': row['id']
+        }
+
+        try:
+            pose_2d_path, pose_3d_path = infer(diffusion, hrnet, image, output_folder)
+        except Exception as e:
+            print(f'Error processing {image["file_path"]}: {e}')
+            pose_2d_path = ''
+            pose_3d_path = ''
+            continue
+        
+        df.at[i, 'pose_2d_path'] = pose_2d_path
+        df.at[i, 'pose_3d_path'] = pose_3d_path
+
+        pb.update(1)
+    
+    df.to_csv(output_csv_file, index=False)
+
+
+

@@ -84,6 +84,9 @@ import numpy as np
 import pandas as pd
 import tensorflow.compat.v1 as tf
 
+import sys
+sys.path.append('.')
+
 from poem.core import common
 from poem.core import input_generator
 from poem.core import keypoint_profiles
